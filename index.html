@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alex's Tech Blog - 记录技术与生活</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
+        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem 0; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        header p { opacity: 0.9; font-size: 1.1rem; }
+        nav { background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 100; }
+        nav ul { list-style: none; display: flex; justify-content: center; flex-wrap: wrap; max-width: 800px; margin: 0 auto; }
+        nav li { margin: 0; }
+        nav a { display: block; padding: 1rem 1.5rem; text-decoration: none; color: #555; font-weight: 500; transition: color 0.3s; }
+        nav a:hover { color: #667eea; }
+        .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        .post { background: white; border-radius: 12px; padding: 2rem; margin-bottom: 2rem; box-shadow: 0 2px 15px rgba(0,0,0,0.05); transition: transform 0.2s; }
+        .post:hover { transform: translateY(-3px); box-shadow: 0 5px 25px rgba(0,0,0,0.1); }
+        .post h2 { color: #333; margin-bottom: 0.5rem; font-size: 1.5rem; }
+        .meta { color: #999; font-size: 0.9rem; margin-bottom: 1rem; }
+        .post p { color: #555; margin-bottom: 1rem; }
+        .tag { display: inline-block; background: #f0f0f0; color: #666; padding: 0.2rem 0.8rem; border-radius: 20px; font-size: 0.85rem; margin-right: 0.5rem; }
+        footer { text-align: center; padding: 2rem; color: #999; font-size: 0.9rem; margin-top: 3rem; border-top: 1px solid #eee; }
+        @media (max-width: 600px) { header h1 { font-size: 1.5rem; } .post { padding: 1.5rem; } }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Alex's Tech Blog</h1>
+        <p>分享编程、开源与数码生活</p>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="/">首页</a></li>
+            <li><a href="/">文章</a></li>
+            <li><a href="/">项目</a></li>
+            <li><a href="/">关于</a></li>
+        </ul>
+    </nav>
+    <div class="container">
+        <article class="post">
+            <h2>使用 Python 构建高性能异步服务</h2>
+            <div class="meta">2026-08-10 · 阅读 2,341 · Python</div>
+            <p>在现代 Web 开发中，异步编程已经成为提升并发能力的关键技术。本文将深入探讨 asyncio 与 aiohttp 的最佳实践...</p>
+            <span class="tag">Python</span>
+            <span class="tag">Async</span>
+            <span class="tag">Backend</span>
+        </article>
+        <article class="post">
+            <h2>我的 Homelab 搭建日记：从 0 到 All-in-One</h2>
+            <div class="meta">2026-07-28 · 阅读 4,128 · 数码</div>
+            <p>最近把家里闲置的 NUC 改造成了 All-in-One 服务器，跑了 Docker、NAS、智能家居中枢...</p>
+            <span class="tag">Homelab</span>
+            <span class="tag">Docker</span>
+            <span class="tag">NAS</span>
+        </article>
+        <article class="post">
+            <h2>Git 工作流进阶：Rebase 还是 Merge？</h2>
+            <div class="meta">2026-07-15 · 阅读 1,892 · 工具</div>
+            <p>团队协作中，分支管理策略往往决定了代码历史的整洁程度。今天我们来聊聊什么时候该用 rebase...</p>
+            <span class="tag">Git</span>
+            <span class="tag">DevOps</span>
+        </article>
+    </div>
+    <footer>
+        <p> Alex's Tech Blog · Powered by Rust & Love</p>
+    </footer>
+</body>
+</html>
