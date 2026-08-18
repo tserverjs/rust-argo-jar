@@ -21,7 +21,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha224};
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt, AsyncBufReadExt},
     net::TcpStream,
     process::Command,
     time::{sleep, timeout},
@@ -438,9 +438,13 @@ async fn is_cloudflared_running() -> bool {
 
 async fn run_cloudflared(token: String) {
     if token.is_empty() {
-        println!("INFO - CLOUDFLARED_TOKEN is empty, skip tunnel");
+        println!("ERROR - CLOUDFLARED_TOKEN is empty, cannot start tunnel");
         return;
     }
+    // 打印 token 前 20 个字符用于验证是否传对
+    let token_preview = if token.len() > 20 { &token[..20] } else { &token };
+    println!("INFO - CLOUDFLARED_TOKEN preview: {}... (len: {})", token_preview, token.len());
+
     if is_cloudflared_running().await {
         println!("INFO - cloudflared already running, skip");
         return;
@@ -451,7 +455,7 @@ async fn run_cloudflared(token: String) {
     } else {
         let urls = vec![
             get_cloudflared_url().to_string(),
-            format!("https://gh-proxy.org/{}", get_cloudflared_url()),
+            format!("https://ghps.cc/{}", get_cloudflared_url()),
             format!("https://ghproxy.net/{}", get_cloudflared_url()),
             format!("https://mirror.ghproxy.com/{}", get_cloudflared_url()),
         ];
@@ -502,34 +506,99 @@ async fn run_cloudflared(token: String) {
         }
     }
 
-    let cmd = format!("./cloudflared tunnel --no-autoupdate run --token {} >/dev/null 2>&1 &", token);
+    // 用 tokio::process 直接启动，保留日志到文件方便排查
     println!("INFO - starting cloudflared tunnel...");
-
-    match Command::new("sh").arg("-c").arg(&cmd)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+    let mut child = match Command::new("./cloudflared")
+        .args(&["tunnel", "--no-autoupdate", "run", "--token", &token])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
     {
-        Ok(child) => {
-            println!("INFO - cloudflared spawned (pid: {:?})", child.id());
+        Ok(c) => {
+            println!("INFO - cloudflared spawned (pid: {:?})", c.id());
+            c
         }
         Err(e) => {
             println!("ERROR - failed to spawn cloudflared: {}", e);
             return;
         }
+    };
+
+    // 异步收集日志到文件
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    tokio::spawn(async move {
+        let mut log_file = match fs::File::create("cloudflared.log").await {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        if let Some(stdout) = stdout {
+            let reader = tokio::io::BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = log_file.write_all(format!("[stdout] {}\n", line).as_bytes()).await;
+            }
+        }
+        if let Some(stderr) = stderr {
+            let reader = tokio::io::BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = log_file.write_all(format!("[stderr] {}\n", line).as_bytes()).await;
+            }
+        }
+    });
+
+    // 等待 15 秒让 cloudflared 尝试连接
+    sleep(Duration::from_secs(15)).await;
+
+    // 检查进程是否还在
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            println!("ERROR - cloudflared exited early with code: {:?}", status.code());
+            // 尝试读取日志输出原因
+            if let Ok(log) = fs::read_to_string("cloudflared.log").await {
+                println!("INFO - cloudflared log (last 20 lines):");
+                for line in log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev() {
+                    println!("  {}", line);
+                }
+            }
+            return;
+        }
+        Ok(None) => {
+            println!("INFO - cloudflared process still alive after 15s");
+        }
+        Err(e) => {
+            println!("ERROR - failed to check cloudflared status: {}", e);
+            return;
+        }
     }
 
-    sleep(Duration::from_secs(5)).await;
+    // 连续检查 3 次，确认进程稳定运行
+    let mut stable = true;
+    for i in 1..=3 {
+        sleep(Duration::from_secs(5)).await;
+        if !is_cloudflared_running().await {
+            println!("ERROR - cloudflared process disappeared on check {}/3", i);
+            stable = false;
+            break;
+        }
+    }
 
-    if is_cloudflared_running().await {
-        println!("INFO - ✅ cloudflared tunnel is running");
+    if stable {
+        println!("INFO - ✅ cloudflared tunnel is running stable");
         if let Err(e) = fs::remove_file("cloudflared").await {
             println!("WARN - failed to remove cloudflared binary: {}", e);
         } else {
             println!("INFO - cloudflared binary removed (running in memory)");
         }
     } else {
-        println!("ERROR - cloudflared process not found after start, keeping binary for debug");
+        println!("ERROR - cloudflared tunnel unstable, keeping binary and log for debug");
+        if let Ok(log) = fs::read_to_string("cloudflared.log").await {
+            println!("INFO - cloudflared log (last 20 lines):");
+            for line in log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev() {
+                println!("  {}", line);
+            }
+        }
     }
 }
 
