@@ -120,13 +120,13 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let uuid = env::var("UUID").unwrap_or_else(|_| "4bda47ec-5ca6-42ff-a225-7861f492a71f".to_string());
-        let domain = env::var("DOMAIN").unwrap_or_else(|_| "temalix.cnav.cn.eu.org".to_string());
+        let uuid = env::var("UUID").unwrap_or_else(|_| "120a9b08-d487-4074-ae61-24ededbba371".to_string());
+        let domain = env::var("DOMAIN").unwrap_or_else(|_| "scyed.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "temalix".to_string());
+        let name = env::var("NAME").unwrap_or_else(|_| "scyed".to_string());
         let ws_path = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
 
-        let mut port = 3000u16;
+        let mut port = 24075u16;
         for key in ["SERVER_PORT", "PORT"] {
             if let Ok(v) = env::var(key) {
                 let v = v.trim();
@@ -143,7 +143,7 @@ impl Config {
 
         let auto_access = env::var("AUTO_ACCESS").unwrap_or_default().to_lowercase() == "true";
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
-        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiODQ3ODAyZTktYzMzZS00YWQ2LTllMzYtZjMwZTA5N2Y5MThmIiwicyI6IlltWTRaakUzWVRjdFl6aGpZeTAwWkRnNExUZzBOelF0TURVM09UVmhaVFJqTmpGayJ9".to_string());
+        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiZjA2NGQxYzItYTg4Ni00ZjBlLTg1NTctMzRjZmQ1OWVkNDU1IiwicyI6Ik9XRTVORFV6TnpndE1EVm1aaTAwWWpJNExXSTRZek10WWpVeE1qa3daV1l3TTJFNCJ9".to_string());
 
         Self { uuid, domain, sub_path, name, ws_path, port, auto_access, debug, cloudflared_token }
     }
