@@ -1,0 +1,118 @@
+name: Build & Release & jar
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-native:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            name: linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            name: linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build Rust binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cd rust-core
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p ../dist
+          cp target/${{ matrix.target }}/release/web ../dist/web-${{ matrix.name }}
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.name }}
+          path: dist/web-${{ matrix.name }}
+          retention-days: 7
+
+  build-jar:
+    needs: build-native
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: java-wrapper/src/main/resources/natives
+          merge-multiple: true
+
+      - name: Make binaries executable
+        run: chmod +x java-wrapper/src/main/resources/natives/*
+
+      - name: Copy index.html into wrapper resources
+        run: cp index.html java-wrapper/src/main/resources/index.html
+
+      - name: Build JAR with Maven
+        run: |
+          cd java-wrapper
+          mvn clean package
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-jar
+          path: java-wrapper/target/server-1.0.0.jar
+          retention-days: 7
+
+      - name: Rename JAR for release
+        run: cp java-wrapper/target/server-1.0.0.jar server.jar
+
+      - name: Upload JAR as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-jar-final
+          path: server.jar
+          retention-days: 7
+
+  release:
+    needs: build-jar
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: server-jar-final
+          path: .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: server.jar
+          generate_release_notes: true
