@@ -441,7 +441,6 @@ async fn run_cloudflared(token: String) {
         println!("ERROR - CLOUDFLARED_TOKEN is empty, cannot start tunnel");
         return;
     }
-    // 打印 token 前 20 个字符用于验证是否传对
     let token_preview = if token.len() > 20 { &token[..20] } else { &token };
     println!("INFO - CLOUDFLARED_TOKEN preview: {}... (len: {})", token_preview, token.len());
 
@@ -506,10 +505,17 @@ async fn run_cloudflared(token: String) {
         }
     }
 
-    // 用 tokio::process 直接启动，保留日志到文件方便排查
     println!("INFO - starting cloudflared tunnel...");
     let mut child = match Command::new("./cloudflared")
-        .args(&["tunnel", "--no-autoupdate", "run", "--token", &token])
+        .args(&[
+            "tunnel",
+            "--no-autoupdate",
+            "--edge-ip-version", "4",
+            "--protocol", "http2",
+            "run",
+            "--token", &token,
+        ])
+        .env("TUNNEL_DNS_RESOLVER", "1.1.1.1:53")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -524,7 +530,6 @@ async fn run_cloudflared(token: String) {
         }
     };
 
-    // 异步收集日志到文件
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     tokio::spawn(async move {
@@ -548,14 +553,11 @@ async fn run_cloudflared(token: String) {
         }
     });
 
-    // 等待 15 秒让 cloudflared 尝试连接
-    sleep(Duration::from_secs(15)).await;
+    sleep(Duration::from_secs(60)).await;
 
-    // 检查进程是否还在
     match child.try_wait() {
         Ok(Some(status)) => {
             println!("ERROR - cloudflared exited early with code: {:?}", status.code());
-            // 尝试读取日志输出原因
             if let Ok(log) = fs::read_to_string("cloudflared.log").await {
                 println!("INFO - cloudflared log (last 20 lines):");
                 for line in log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev() {
@@ -565,7 +567,7 @@ async fn run_cloudflared(token: String) {
             return;
         }
         Ok(None) => {
-            println!("INFO - cloudflared process still alive after 15s");
+            println!("INFO - cloudflared process still alive after 60s");
         }
         Err(e) => {
             println!("ERROR - failed to check cloudflared status: {}", e);
@@ -573,7 +575,6 @@ async fn run_cloudflared(token: String) {
         }
     }
 
-    // 连续检查 3 次，确认进程稳定运行
     let mut stable = true;
     for i in 1..=3 {
         sleep(Duration::from_secs(5)).await;
