@@ -455,8 +455,8 @@ async fn run_cloudflared(token: String) {
     } else {
         let urls = vec![
             get_cloudflared_url().to_string(),
-            format!("https://ghps.cc/{}", get_cloudflared_url()),
-            format!("https://ghproxy.net/{}", get_cloudflared_url()),
+            format!("https://gh-proxy.org/{}", get_cloudflared_url()),
+            format!("https://gh-proxy.com/{}", get_cloudflared_url()),
             format!("https://mirror.ghproxy.com/{}", get_cloudflared_url()),
         ];
 
