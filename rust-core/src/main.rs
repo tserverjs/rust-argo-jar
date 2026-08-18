@@ -113,7 +113,6 @@ struct Config {
     name: String,
     ws_path: String,
     port: u16,
-    auto_access: bool,
     debug: bool,
     cloudflared_token: String,
 }
@@ -141,11 +140,10 @@ impl Config {
             }
         }
 
-        let auto_access = env::var("AUTO_ACCESS").unwrap_or_default().to_lowercase() == "true";
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
         let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiZjA2NGQxYzItYTg4Ni00ZjBlLTg1NTctMzRjZmQ1OWVkNDU1IiwicyI6Ik9XRTVORFV6TnpndE1EVm1aaTAwWWpJNExXSTRZek10WWpVeE1qa3daV1l3TTJFNCJ9".to_string());
 
-        Self { uuid, domain, sub_path, name, ws_path, port, auto_access, debug, cloudflared_token }
+        Self { uuid, domain, sub_path, name, ws_path, port, debug, cloudflared_token }
     }
 }
 
@@ -448,15 +446,12 @@ async fn run_cloudflared(token: String) {
         return;
     }
 
-    // 如果本地已有 cloudflared 文件，直接使用
     if fs::metadata("cloudflared").await.is_ok() {
         println!("INFO - found local cloudflared binary, using it");
     } else {
-        // 多镜像源回退下载
         let urls = vec![
             get_cloudflared_url().to_string(),
             format!("https://gh-proxy.org/{}", get_cloudflared_url()),
-            format!("https://ghps.cc/{}", get_cloudflared_url()),
             format!("https://ghproxy.net/{}", get_cloudflared_url()),
             format!("https://mirror.ghproxy.com/{}", get_cloudflared_url()),
         ];
@@ -538,16 +533,6 @@ async fn run_cloudflared(token: String) {
     }
 }
 
-async fn add_access_task(domain: String, sub_path: String) {
-    if domain.is_empty() { return; }
-    let full_url = format!("https://{}/{}", domain, sub_path);
-    let client = reqwest::Client::new();
-    let _ = client.post("https://oooo.serv00.net/add-url")
-        .json(&serde_json::json!({"url": full_url}))
-        .header("Content-Type", "application/json")
-        .send().await;
-}
-
 #[tokio::main]
 async fn main() {
     let config = Config::from_env();
@@ -582,15 +567,6 @@ async fn main() {
 
     let cf_token = state.config.cloudflared_token.clone();
     tokio::spawn(run_cloudflared(cf_token));
-
-    tokio::spawn(async {
-        sleep(Duration::from_secs(180)).await;
-        let _ = fs::remove_file("cloudflared").await;
-    });
-
-    let domain = state.config.domain.clone();
-    let sub_path = state.config.sub_path.clone();
-    tokio::spawn(add_access_task(domain, sub_path));
 
     axum::serve(listener, app).await.unwrap();
 }
