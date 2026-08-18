@@ -119,13 +119,13 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let uuid = env::var("UUID").unwrap_or_else(|_| "120a9b08-d487-4074-ae61-24ededbba371".to_string());
-        let domain = env::var("DOMAIN").unwrap_or_else(|_| "scyed.cnav.cn.eu.org".to_string());
+        let uuid = env::var("UUID").unwrap_or_else(|_| "be17d78e-6ab5-4fe9-9c37-3973a04a5faf".to_string());
+        let domain = env::var("DOMAIN").unwrap_or_else(|_| "netherhost.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "scyed".to_string());
+        let name = env::var("NAME").unwrap_or_else(|_| "netherhost".to_string());
         let ws_path = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
 
-        let mut port = 24075u16;
+        let mut port = 3000u16;
         for key in ["SERVER_PORT", "PORT"] {
             if let Ok(v) = env::var(key) {
                 let v = v.trim();
