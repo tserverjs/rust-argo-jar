@@ -29,7 +29,6 @@ use tokio::{
 use tracing::Level;
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
 
-// ==================== 伪装页面 ====================
 const FAKE_HTML: &str = r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -107,7 +106,6 @@ const BLOCKED_DOMAINS: &[&str] = &[
     "testmy.net", "bandwidth.place", "speed.io", "librespeed.org", "speedcheck.org",
 ];
 
-// ==================== 配置 ====================
 struct Config {
     uuid: String,
     domain: String,
@@ -151,7 +149,6 @@ impl Config {
     }
 }
 
-// ==================== 状态 ====================
 struct AppState {
     config: Config,
     current_domain: std::sync::Mutex<String>,
@@ -178,7 +175,6 @@ impl AppState {
     }
 }
 
-// ==================== 工具函数 ====================
 fn is_port_available(port: u16) -> bool {
     TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
@@ -267,7 +263,6 @@ async fn get_ip_info(config: &Config) -> (String, String, u16) {
     }
 }
 
-// ==================== Trojan 协议解析 ====================
 fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
     if data.len() < 58 {
         return None;
@@ -337,7 +332,6 @@ fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)>
     Some((host, port, offset))
 }
 
-// ==================== WebSocket 处理 ====================
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     let first_msg = match timeout(Duration::from_secs(5), receiver.next()).await {
@@ -394,11 +388,9 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-// ==================== HTTP 处理 ====================
 async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
     let path = uri.path();
     if path == "/" || path == "/index.html" {
-        // 优先读取外部 index.html（支持自定义），失败再用内置默认页面
         if let Ok(content) = tokio::fs::read_to_string("index.html").await {
             return Html(content).into_response();
         }
@@ -423,7 +415,6 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
     (axum::http::StatusCode::NOT_FOUND, "Not Found\n").into_response()
 }
 
-// ==================== Cloudflared ====================
 fn get_cloudflared_url() -> &'static str {
     match std::env::consts::ARCH {
         "aarch64" => "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
@@ -434,42 +425,119 @@ fn get_cloudflared_url() -> &'static str {
 async fn is_cloudflared_running() -> bool {
     let output = match Command::new("ps").arg("aux").output().await {
         Ok(o) => o,
-        Err(_) => return false,
+        Err(e) => {
+            println!("DEBUG - ps command failed: {}", e);
+            return false;
+        }
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.contains("./cloudflared") && stdout.contains("tunnel")
+    let running = stdout.contains("./cloudflared") && stdout.contains("tunnel");
+    if running {
+        println!("DEBUG - detected existing cloudflared process");
+    }
+    running
 }
 
 async fn run_cloudflared(token: String) {
     if token.is_empty() {
+        println!("INFO - CLOUDFLARED_TOKEN is empty, skip tunnel");
         return;
     }
     if is_cloudflared_running().await {
+        println!("INFO - cloudflared already running, skip");
         return;
     }
-    let client = reqwest::Client::new();
-    let url = get_cloudflared_url();
-    match client.get(url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            if let Ok(bytes) = resp.bytes().await {
-                let _ = fs::write("cloudflared", &bytes).await;
-                if let Ok(metadata) = fs::metadata("cloudflared").await {
-                    let mut perms = metadata.permissions();
-                    perms.set_mode(0o755);
-                    let _ = fs::set_permissions("cloudflared", perms).await;
+
+    // 如果本地已有 cloudflared 文件，直接使用
+    if fs::metadata("cloudflared").await.is_ok() {
+        println!("INFO - found local cloudflared binary, using it");
+    } else {
+        // 多镜像源回退下载
+        let urls = vec![
+            get_cloudflared_url().to_string(),
+            format!("https://gh-proxy.org/{}", get_cloudflared_url()),
+            format!("https://ghps.cc/{}", get_cloudflared_url()),
+            format!("https://ghproxy.net/{}", get_cloudflared_url()),
+            format!("https://mirror.ghproxy.com/{}", get_cloudflared_url()),
+        ];
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let mut downloaded = false;
+        for (i, url) in urls.iter().enumerate() {
+            println!("INFO - downloading cloudflared from mirror {}...", i + 1);
+            match client.get(url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.bytes().await {
+                        Ok(bytes) => {
+                            if let Err(e) = fs::write("cloudflared", &bytes).await {
+                                println!("ERROR - failed to write cloudflared: {}", e);
+                                continue;
+                            }
+                            if let Ok(metadata) = fs::metadata("cloudflared").await {
+                                let mut perms = metadata.permissions();
+                                perms.set_mode(0o755);
+                                let _ = fs::set_permissions("cloudflared", perms).await;
+                            }
+                            println!("INFO - cloudflared downloaded ({} bytes) from mirror {}", bytes.len(), i + 1);
+                            downloaded = true;
+                            break;
+                        }
+                        Err(e) => {
+                            println!("ERROR - failed to read bytes from mirror {}: {}", i + 1, e);
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    println!("ERROR - mirror {} returned status: {}", i + 1, resp.status());
+                }
+                Err(e) => {
+                    println!("ERROR - mirror {} failed: {}", i + 1, e);
                 }
             }
         }
-        _ => return,
+
+        if !downloaded {
+            println!("ERROR - all download mirrors failed, cloudflared not available");
+            return;
+        }
     }
-    let cmd = format!("nohup ./cloudflared tunnel --no-autoupdate run --token {} >/dev/null 2>&1 &", token);
-    let _ = Command::new("sh").arg("-c").arg(&cmd)
-        .stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-    sleep(Duration::from_secs(3)).await;
-    let _ = fs::remove_file("cloudflared").await;
+
+    let cmd = format!("./cloudflared tunnel --no-autoupdate run --token {} >/dev/null 2>&1 &", token);
+    println!("INFO - starting cloudflared tunnel...");
+
+    match Command::new("sh").arg("-c").arg(&cmd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            println!("INFO - cloudflared spawned (pid: {:?})", child.id());
+        }
+        Err(e) => {
+            println!("ERROR - failed to spawn cloudflared: {}", e);
+            return;
+        }
+    }
+
+    sleep(Duration::from_secs(5)).await;
+
+    if is_cloudflared_running().await {
+        println!("INFO - ✅ cloudflared tunnel is running");
+        if let Err(e) = fs::remove_file("cloudflared").await {
+            println!("WARN - failed to remove cloudflared binary: {}", e);
+        } else {
+            println!("INFO - cloudflared binary removed (running in memory)");
+        }
+    } else {
+        println!("ERROR - cloudflared process not found after start, keeping binary for debug");
+    }
 }
 
-// ==================== 保活 ====================
 async fn add_access_task(domain: String, sub_path: String) {
     if domain.is_empty() { return; }
     let full_url = format!("https://{}/{}", domain, sub_path);
@@ -480,7 +548,6 @@ async fn add_access_task(domain: String, sub_path: String) {
         .send().await;
 }
 
-// ==================== 主函数 ====================
 #[tokio::main]
 async fn main() {
     let config = Config::from_env();
@@ -513,7 +580,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     println!("INFO - ✅ server is running on port {}", actual_port);
 
-    // 在 spawn 前 clone 出字符串，避免生命周期借用问题
     let cf_token = state.config.cloudflared_token.clone();
     tokio::spawn(run_cloudflared(cf_token));
 
