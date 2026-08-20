@@ -59,7 +59,7 @@ const FAKE_HTML: &str = r#"<!DOCTYPE html>
 </head>
 <body>
     <header>
-        <h1>Alex's Tech Blog</h1>
+        <h1>Alex's Tech Blog | Arg</h1>
         <p>分享编程、开源与数码生活</p>
     </header>
     <nav>
