@@ -119,10 +119,10 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let uuid = env::var("UUID").unwrap_or_else(|_| "be17d78e-6ab5-4fe9-9c37-3973a04a5faf".to_string());
-        let domain = env::var("DOMAIN").unwrap_or_else(|_| "netherhost.cnav.cn.eu.org".to_string());
+        let uuid = env::var("UUID").unwrap_or_else(|_| "366867cc-a72c-4481-a528-941f722126d2".to_string());
+        let domain = env::var("DOMAIN").unwrap_or_else(|_| "heaven.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "netherhost".to_string());
+        let name = env::var("NAME").unwrap_or_else(|_| "heaven".to_string());
         let ws_path = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
 
         let mut port = 3000u16;
@@ -141,7 +141,7 @@ impl Config {
         }
 
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
-        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiZjA2NGQxYzItYTg4Ni00ZjBlLTg1NTctMzRjZmQ1OWVkNDU1IiwicyI6Ik9XRTVORFV6TnpndE1EVm1aaTAwWWpJNExXSTRZek10WWpVeE1qa3daV1l3TTJFNCJ9".to_string());
+        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiNDczY2RlY2MtM2RhOS00ZDk1LTg2ZjUtYWFlYjFiNWEyMWIzIiwicyI6Ik9UUXdObUZqWkRrdE56RmhZaTAwWm1Vd0xUZzFNREF0TkRsa1l6WmxOMlkyWkdFeSJ9".to_string());
 
         Self { uuid, domain, sub_path, name, ws_path, port, debug, cloudflared_token }
     }
