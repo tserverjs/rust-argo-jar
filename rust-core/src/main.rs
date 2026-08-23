@@ -261,6 +261,8 @@ async fn get_ip_info(config: &Config) -> (String, String, u16) {
     }
 }
 
+// ==================== 协议解析 ====================
+
 fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
     if data.len() < 58 {
         return None;
@@ -330,28 +332,139 @@ fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)>
     Some((host, port, offset))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
-    let first_msg = match timeout(Duration::from_secs(5), receiver.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => data,
-        _ => return,
+fn parse_vless_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
+    // VLESS 协议: 版本(1) + UUID(16) + AddonsLen(1) + Addons(N) + Cmd(1) + Atyp(1) + Addr(N) + Port(2)
+    if data.len() < 18 || data[0] != 0 {
+        return None;
+    }
+    
+    let uuid_bytes = match uuid.parse::<uuid::Uuid>() {
+        Ok(u) => *u.as_bytes(),
+        Err(_) => return None,
     };
-    let (host, port, rest_offset) = match parse_trojan_request(&first_msg, &state.config.uuid) {
-        Some(v) => v,
-        None => return,
+    
+    if data[1..17] != uuid_bytes {
+        return None;
+    }
+    
+    let addons_len = data[17] as usize;
+    let mut offset = 18 + addons_len; // 指令位置
+    
+    if offset >= data.len() || data[offset] != 1 { // 1 = TCP
+        return None;
+    }
+    offset += 1; // 跳过指令
+    
+    if offset >= data.len() {
+        return None;
+    }
+    let atyp = data[offset];
+    offset += 1;
+    
+    let (host, new_offset) = match atyp {
+        1 => { // IPv4
+            if offset + 4 > data.len() { return None; }
+            let ip = format!("{}.{}.{}.{}", data[offset], data[offset+1], data[offset+2], data[offset+3]);
+            (ip, offset + 4)
+        }
+        2 => { // 域名
+            if offset >= data.len() { return None; }
+            let len = data[offset] as usize;
+            offset += 1;
+            if offset + len > data.len() { return None; }
+            let domain = String::from_utf8_lossy(&data[offset..offset+len]).to_string();
+            (domain, offset + len)
+        }
+        3 => { // IPv6
+            if offset + 16 > data.len() { return None; }
+            let mut ip = String::new();
+            for i in 0..8 {
+                if i > 0 { ip.push(':'); }
+                ip.push_str(&format!("{:02x}{:02x}", data[offset + i*2], data[offset + i*2 + 1]));
+            }
+            (ip, offset + 16)
+        }
+        _ => return None,
     };
+    
+    offset = new_offset;
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let port = u16::from_be_bytes([data[offset], data[offset + 1]]);
+    offset += 2;
+    
+    Some((host, port, offset))
+}
+
+fn parse_shadowsocks_request(data: &[u8]) -> Option<(String, u16, usize)> {
+    // SS 协议: Atyp(1) + Addr(N) + Port(2) + Payload(N)
+    if data.is_empty() {
+        return None;
+    }
+    let atyp = data[0];
+    let mut offset = 1usize;
+    
+    let (host, new_offset) = match atyp {
+        1 => { // IPv4
+            if offset + 4 > data.len() { return None; }
+            let ip = format!("{}.{}.{}.{}", data[offset], data[offset+1], data[offset+2], data[offset+3]);
+            (ip, offset + 4)
+        }
+        3 => { // 域名
+            if offset >= data.len() { return None; }
+            let len = data[offset] as usize;
+            offset += 1;
+            if offset + len > data.len() { return None; }
+            let domain = String::from_utf8_lossy(&data[offset..offset+len]).to_string();
+            (domain, offset + len)
+        }
+        4 => { // IPv6
+            if offset + 16 > data.len() { return None; }
+            let mut ip = String::new();
+            for i in 0..8 {
+                if i > 0 { ip.push(':'); }
+                ip.push_str(&format!("{:02x}{:02x}", data[offset + i*2], data[offset + i*2 + 1]));
+            }
+            (ip, offset + 16)
+        }
+        _ => return None,
+    };
+    
+    offset = new_offset;
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let port = u16::from_be_bytes([data[offset], data[offset + 1]]);
+    offset += 2;
+    
+    Some((host, port, offset))
+}
+
+// ==================== 通用转发 ====================
+
+async fn relay_tcp(ws: WebSocket, host: String, port: u16, rest_data: &[u8]) {
     if is_blocked_domain(&host) {
+        println!("DEBUG - Blocked domain: {}", host);
         return;
     }
+    
     let resolved = resolve_host(&host).await;
     let mut tcp = match TcpStream::connect((resolved.as_str(), port)).await {
         Ok(s) => s,
-        Err(_) => return,
+        Err(e) => {
+            println!("DEBUG - TCP connect failed: {}:{}", host, e);
+            return;
+        }
     };
-    if rest_offset < first_msg.len() {
-        let _ = tcp.write_all(&first_msg[rest_offset..]).await;
+    
+    if !rest_data.is_empty() {
+        let _ = tcp.write_all(rest_data).await;
     }
+    
     let (mut tcp_read, mut tcp_write) = tcp.split();
+    let (mut sender, mut receiver) = ws.split();
+    
     let ws_to_tcp = async {
         while let Ok(Some(Ok(msg))) = timeout(Duration::from_secs(300), receiver.next()).await {
             if let Message::Binary(data) = msg {
@@ -374,15 +487,68 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let _ = tokio::join!(ws_to_tcp, tcp_to_ws);
 }
 
+// ==================== WebSocket Handler ====================
+
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+    let (mut sender, mut receiver) = socket.split();
+    
+    let first_msg = match timeout(Duration::from_secs(5), receiver.next()).await {
+        Ok(Some(Ok(Message::Binary(data)))) => {
+            println!("DEBUG - WS got binary, len={}", data.len());
+            data
+        }
+        other => {
+            println!("DEBUG - WS first msg unexpected: {:?}", other);
+            return;
+        }
+    };
+    
+    // 1. 尝试 VLESS (首字节为0, 长度>17)
+    if first_msg.len() > 17 && first_msg[0] == 0 {
+        if let Some((host, port, offset)) = parse_vless_request(&first_msg, &state.config.uuid) {
+            println!("DEBUG - VLESS auth OK, target={}:{}", host, port);
+            // VLESS 响应: 版本(0) + 附加长度(0)
+            let _ = sender.send(Message::Binary(vec![0, 0])).await;
+            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            return;
+        }
+    }
+    
+    // 2. 尝试 Trojan (长度>=58)
+    if first_msg.len() >= 58 {
+        if let Some((host, port, offset)) = parse_trojan_request(&first_msg, &state.config.uuid) {
+            println!("DEBUG - Trojan auth OK, target={}:{}", host, port);
+            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            return;
+        }
+    }
+    
+    // 3. 尝试 Shadowsocks (首字节为1,3,4)
+    if !first_msg.is_empty() && [1u8, 3, 4].contains(&first_msg[0]) {
+        if let Some((host, port, offset)) = parse_shadowsocks_request(&first_msg) {
+            println!("DEBUG - SS target={}:{}", host, port);
+            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            return;
+        }
+    }
+    
+    println!("DEBUG - Unknown protocol, head={:?}",
+        String::from_utf8_lossy(&first_msg[..first_msg.len().min(60)]));
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     uri: Uri,
 ) -> Response {
     let path = uri.path();
+    println!("DEBUG - WS hit: path={} expected_contains={}", path, state.config.ws_path);
+    
     if !path.contains(&state.config.ws_path) {
+        println!("DEBUG - WS 404: path mismatch");
         return (axum::http::StatusCode::NOT_FOUND, "Not Found\n").into_response();
     }
+    println!("DEBUG - WS 101: upgrading connection");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -401,13 +567,32 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
         *state.current_domain.lock().unwrap() = domain.clone();
         *state.tls.lock().unwrap() = tls.clone();
         *state.current_port.lock().unwrap() = port;
+        
         let name_part = if state.config.name.is_empty() { isp } else { format!("{}-{}", state.config.name, isp) };
         let tls_param = if tls == "tls" { "tls" } else { "none" };
+        let ss_tls_param = if tls == "tls" { "tls;" } else { "" };
+        
+        // VLESS
+        let vless_url = format!(
+            "vless://{}@{}:{}?encryption=none&security={}&sni={}&fp=chrome&type=ws&host={}&path=%2F{}#{}",
+            state.config.uuid, domain, port, tls_param, domain, domain, state.config.ws_path, name_part
+        );
+        
+        // Trojan
         let trojan_url = format!(
             "trojan://{}@{}:{}?security={}&sni={}&fp=chrome&type=ws&host={}&path=%2F{}#{}",
             state.config.uuid, domain, port, tls_param, domain, domain, state.config.ws_path, name_part
         );
-        let sub = BASE64.encode(trojan_url) + "\n";
+        
+        // Shadowsocks
+        let ss_method_password = BASE64.encode(format!("none:{}", state.config.uuid));
+        let ss_url = format!(
+            "ss://{}@{}:{}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D{};path%3D%2F{};{}sni%3D{};skip-cert-verify%3Dtrue;mux%3D0#{}",
+            ss_method_password, domain, port, domain, state.config.ws_path, ss_tls_param, domain, name_part
+        );
+        
+        let subscription = format!("{}\n{}\n{}\n", vless_url, trojan_url, ss_url);
+        let sub = BASE64.encode(subscription);
         return sub.into_response();
     }
     (axum::http::StatusCode::NOT_FOUND, "Not Found\n").into_response()
@@ -624,15 +809,34 @@ async fn main() {
     }
 
     let state = Arc::new(AppState::new(config));
+
+    let (pub_ip, tls_mode, pub_port) = get_ip_info(&state.config).await;
+    println!("INFO - 🌐 Public IP: {}", pub_ip);
+    println!("INFO - 🔒 TLS mode: {}", tls_mode);
+    println!("INFO - 📡 External port: {}", pub_port);
+
+    if state.config.domain.is_empty() || state.config.domain == "your-domain.com" {
+        *state.current_domain.lock().unwrap() = pub_ip.clone();
+        println!("INFO - 📝 Auto-set domain fallback to public IP");
+    }
+
     let app = Router::new()
         .route("/", get(http_handler))
         .route(&format!("/{}", state.config.sub_path), get(http_handler))
         .route(&format!("/{}", state.config.ws_path), get(ws_handler))
         .with_state(state.clone());
 
-    let addr = format!("0.0.0.0:{}", actual_port).parse::<std::net::SocketAddr>().unwrap();
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    println!("INFO - ✅ server is running on port {}", actual_port);
+    let listener = match tokio::net::TcpListener::bind(format!("[::]:{}", actual_port)).await {
+        Ok(l) => {
+            println!("INFO - ✅ server on [::]:{} (IPv4+IPv6 dual-stack)", actual_port);
+            l
+        }
+        Err(e) => {
+            println!("WARN - IPv6 bind failed ({}), fallback to IPv4 only", e);
+            let addr = format!("0.0.0.0:{}", actual_port).parse::<std::net::SocketAddr>().unwrap();
+            tokio::net::TcpListener::bind(addr).await.expect("bind failed")
+        }
+    };
 
     let cf_token = state.config.cloudflared_token.clone();
     tokio::spawn(run_cloudflared(cf_token));
