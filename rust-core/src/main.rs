@@ -511,7 +511,6 @@ async fn run_cloudflared(token: String) {
             "tunnel",
             "--no-autoupdate",
             "--edge-ip-version", "4",
-            "--protocol", "http2",
             "run",
             "--token", &token,
         ])
