@@ -121,7 +121,7 @@ impl Config {
         let uuid = env::var("UUID").unwrap_or_else(|_| "2a39afe0-991a-4d66-af2c-7724288f5eb7".to_string());
         let domain = env::var("DOMAIN").unwrap_or_else(|_| "botzone.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "heaven".to_string());
+        let name = env::var("NAME").unwrap_or_else(|_| "botzone".to_string());
         let ws_path = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
         let mut port = 26174u16;
         for key in ["SERVER_PORT", "PORT"] {
