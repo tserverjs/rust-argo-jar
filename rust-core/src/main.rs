@@ -146,7 +146,7 @@ impl Config {
             }
         }
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
-        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiNDczY2RlY2MtM2RhOS00ZDk1LTg2ZjUtYWFlYjFiNWEyMWIzIiwicyI6Ik9UUXdObUZqWkRrdE56RmhZaTAwWm1Vd0xUZzFNREF0TkRsa1l6WmxOMlkyWkdFeSJ9".to_string());
+        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiMjBlY2Y0N2QtOGQwNy00MjNlLTljNGMtZmU5MDVlN2MxZDQ0IiwicyI6Ik4yTmtaR05tWW1ZdE5UZGlZUzAwTW1Ka0xUZzVNalF0TWpsaE1qZG1ZV0kxTVdSbCJ9".to_string());
 
         let reality_pubkey = env::var("REALITY_PUBKEY").unwrap_or_default();
         let reality_port = env::var("REALITY_PORT").ok().and_then(|v| v.parse::<u16>().ok());
