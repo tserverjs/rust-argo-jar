@@ -27,6 +27,7 @@ use tokio::{
 };
 use tracing::Level;
 use tracing_subscriber::{FmtSubscriber, filter::LevelFilter};
+
 const FAKE_HTML: &str = r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -98,10 +99,12 @@ const FAKE_HTML: &str = r#"<!DOCTYPE html>
     </footer>
 </body>
 </html>"#;
+
 const BLOCKED_DOMAINS: &[&str] = &[
     "speedtest.net", "fast.com", "speedtest.cn", "speed.cloudflare.com", "speedof.me",
     "testmy.net", "bandwidth.place", "speed.io", "librespeed.org", "speedcheck.org",
 ];
+
 struct Config {
     uuid: String,
     domain: String,
@@ -111,20 +114,24 @@ struct Config {
     port: u16,
     debug: bool,
     cloudflared_token: String,
-    // 新增配置项
     reality_pubkey: String,
     reality_port: Option<u16>,
     hy2_port: Option<u16>,
     hy2_fingerprint: String,
 }
+
 impl Config {
     fn from_env() -> Self {
-        let uuid = env::var("UUID").unwrap_or_else(|_| "2a39afe0-991a-4d66-af2c-7724288f5eb7".to_string());
-        let domain = env::var("DOMAIN").unwrap_or_else(|_| "botzone.cnav.cn.eu.org".to_string());
+        let uuid = env::var("UUID").unwrap_or_else(|_| "dfdb0037-70ca-46b0-ba2e-99f27ad568cc".to_string());
+        let domain = env::var("DOMAIN").unwrap_or_else(|_| "plugged.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "botzone".to_string());
-        let ws_path = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
-        let mut port = 26174u16;
+        let name = env::var("NAME").unwrap_or_else(|_| "plugged".to_string());
+        
+        // 格式化 WS 路径，去掉首尾斜杠，保证后续拼接统一
+        let raw_ws = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
+        let ws_path = raw_ws.trim_matches('/').to_string();
+
+        let mut port = 40694u16;
         for key in ["SERVER_PORT", "PORT"] {
             if let Ok(v) = env::var(key) {
                 let v = v.trim();
@@ -141,7 +148,6 @@ impl Config {
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
         let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiNDczY2RlY2MtM2RhOS00ZDk1LTg2ZjUtYWFlYjFiNWEyMWIzIiwicyI6Ik9UUXdObUZqWkRrdE56RmhZaTAwWm1Vd0xUZzFNREF0TkRsa1l6WmxOMlkyWkdFeSJ9".to_string());
 
-        // ===== 新增环境变量读取 =====
         let reality_pubkey = env::var("REALITY_PUBKEY").unwrap_or_default();
         let reality_port = env::var("REALITY_PORT").ok().and_then(|v| v.parse::<u16>().ok());
         let hy2_port = env::var("HY2_PORT").ok().and_then(|v| v.parse::<u16>().ok());
@@ -163,6 +169,7 @@ impl Config {
         }
     }
 }
+
 struct AppState {
     config: Config,
     current_domain: std::sync::Mutex<String>,
@@ -170,6 +177,7 @@ struct AppState {
     tls: std::sync::Mutex<String>,
     isp: std::sync::Mutex<String>,
 }
+
 impl AppState {
     fn new(config: Config) -> Self {
         let domain = config.domain.clone();
@@ -187,9 +195,11 @@ impl AppState {
         }
     }
 }
+
 fn is_port_available(port: u16) -> bool {
     TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
+
 fn find_available_port(start: u16) -> Option<u16> {
     for p in start..=65535 {
         if is_port_available(p) {
@@ -198,12 +208,14 @@ fn find_available_port(start: u16) -> Option<u16> {
     }
     None
 }
+
 fn is_blocked_domain(host: &str) -> bool {
     let host_lower = host.to_lowercase();
     BLOCKED_DOMAINS.iter().any(|blocked| {
         host_lower == *blocked || host_lower.ends_with(&format!(".{}", blocked))
     })
 }
+
 async fn resolve_host(host: &str) -> String {
     if host.parse::<IpAddr>().is_ok() {
         return host.to_string();
@@ -227,6 +239,7 @@ async fn resolve_host(host: &str) -> String {
     }
     host.to_string()
 }
+
 async fn get_isp() -> String {
     let client = reqwest::Client::new();
     if let Ok(Ok(resp)) = timeout(Duration::from_secs(3), client.get("https://api.ip.sb/geoip")
@@ -253,6 +266,7 @@ async fn get_isp() -> String {
     }
     "Unknown".to_string()
 }
+
 async fn get_ip_info(config: &Config) -> (String, String, u16) {
     if config.domain.is_empty() || config.domain == "your-domain.com" {
         let client = reqwest::Client::new();
@@ -269,7 +283,9 @@ async fn get_ip_info(config: &Config) -> (String, String, u16) {
         (config.domain.clone(), "tls".to_string(), 443)
     }
 }
+
 // ==================== 协议解析 ====================
+
 fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
     if data.len() < 58 {
         return None;
@@ -333,13 +349,13 @@ fn parse_trojan_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)>
     }
     Some((host, port, offset))
 }
-// 修复后的VLESS解析（修复IPv6 atyp=4）
+
+// VLESS 完整解析机制
 fn parse_vless_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
-    // VLESS 最小长度 22
     if data.len() < 22 || data[0] != 0 {
         return None;
     }
-    let uuid_bytes = match uuid.parse::<uuid::Uuid>() {
+    let uuid_bytes = match uuid::Uuid::parse_str(uuid) {
         Ok(u) => *u.as_bytes(),
         Err(_) => return None,
     };
@@ -352,15 +368,22 @@ fn parse_vless_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> 
         return None;
     }
     let cmd = data[offset];
-    if cmd != 1 { // TCP only
+    if cmd != 1 { // 仅处理 TCP (1)
         return None;
     }
     let mut offset = offset + 1;
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let port = u16::from_be_bytes([data[offset], data[offset + 1]]);
+    offset += 2;
+
     if offset >= data.len() {
         return None;
     }
     let atyp = data[offset];
     offset += 1;
+
     let (host, new_offset) = match atyp {
         1 => { // IPv4
             if offset + 4 > data.len() { return None; }
@@ -375,7 +398,7 @@ fn parse_vless_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> 
             let domain = String::from_utf8_lossy(&data[offset..offset+len]).to_string();
             (domain, offset + len)
         }
-        4 => { // IPv6 (fixed)
+        3 => { // IPv6
             if offset + 16 > data.len() { return None; }
             let mut ip = String::new();
             for i in 0..8 {
@@ -386,14 +409,10 @@ fn parse_vless_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> 
         }
         _ => return None,
     };
-    offset = new_offset;
-    if offset + 2 > data.len() {
-        return None;
-    }
-    let port = u16::from_be_bytes([data[offset], data[offset + 1]]);
-    offset += 2;
-    Some((host, port, offset))
+
+    Some((host, port, new_offset))
 }
+
 fn parse_shadowsocks_request(data: &[u8]) -> Option<(String, u16, usize)> {
     if data.is_empty() {
         return None;
@@ -433,11 +452,9 @@ fn parse_shadowsocks_request(data: &[u8]) -> Option<(String, u16, usize)> {
     offset += 2;
     Some((host, port, offset))
 }
-// ============ 新增：VMESS over WS 解析 ============
+
+// 兼容版 VMess 简易 Header 解析
 fn parse_vmess_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> {
-    // VMess v1 header:
-    // ver(1) + uuid(16) + timestamp(4) + cmd(1) + atyp(1) + addr + port(2) + ...
-    // minimal header length: 1+16+4+1+1+2 = 25
     if data.len() < 25 {
         return None;
     }
@@ -445,59 +462,59 @@ fn parse_vmess_request(data: &[u8], uuid: &str) -> Option<(String, u16, usize)> 
     if ver != 1 {
         return None;
     }
-    let uuid_bytes = match uuid.parse::<uuid::Uuid>() {
+    let uuid_bytes = match uuid::Uuid::parse_str(uuid) {
         Ok(u) => *u.as_bytes(),
         Err(_) => return None,
     };
     if data[1..17] != uuid_bytes {
         return None;
     }
-    // skip timestamp 4 bytes
     let mut offset = 1 + 16 + 4;
+    if offset >= data.len() { return None; }
     let cmd = data[offset];
-    offset +=1;
-    if cmd != 1 { // only TCP
-        return None;
-    }
-    if offset >= data.len() {
-        return None;
-    }
+    offset += 1;
+    if cmd != 1 { return None; }
+
+    if offset >= data.len() { return None; }
     let atyp = data[offset];
-    offset +=1;
+    offset += 1;
+
     let (host, new_offset) = match atyp {
-        1 => { // ipv4
-            if offset +4 > data.len() {return None;}
-            let ip = format!("{}.{}.{}.{}", data[offset],data[offset+1],data[offset+2],data[offset+3]);
-            (ip, offset+4)
+        1 => {
+            if offset + 4 > data.len() { return None; }
+            let ip = format!("{}.{}.{}.{}", data[offset], data[offset+1], data[offset+2], data[offset+3]);
+            (ip, offset + 4)
         }
-        2 => { // domain
-            if offset >= data.len() {return None;}
+        2 => {
+            if offset >= data.len() { return None; }
             let len = data[offset] as usize;
-            offset +=1;
-            if offset + len > data.len() {return None;}
+            offset += 1;
+            if offset + len > data.len() { return None; }
             let dom = String::from_utf8_lossy(&data[offset..offset+len]).to_string();
             (dom, offset + len)
         }
-        4 => { // ipv6
-            if offset +16 > data.len() {return None;}
+        3 => {
+            if offset + 16 > data.len() { return None; }
             let mut ip = String::new();
             for i in 0..8 {
-                if i>0 {ip.push(':');}
+                if i > 0 { ip.push(':'); }
                 ip.push_str(&format!("{:02x}{:02x}", data[offset+i*2], data[offset+i*2+1]));
             }
-            (ip, offset+16)
+            (ip, offset + 16)
         }
         _ => return None,
     };
     offset = new_offset;
-    if offset +2 > data.len() {
+    if offset + 2 > data.len() {
         return None;
     }
     let port = u16::from_be_bytes([data[offset], data[offset+1]]);
-    offset +=2;
+    offset += 2;
     Some((host, port, offset))
 }
+
 // ==================== 通用转发 ====================
+
 async fn relay_tcp(ws: WebSocket, host: String, port: u16, rest_data: &[u8]) {
     if is_blocked_domain(&host) {
         println!("DEBUG - Blocked domain: {}", host);
@@ -511,11 +528,18 @@ async fn relay_tcp(ws: WebSocket, host: String, port: u16, rest_data: &[u8]) {
             return;
         }
     };
+
+    // 关键修正：确保发送首包后剩余的报文（如 TLS Client Hello）透明发送给目标 Server
     if !rest_data.is_empty() {
-        let _ = tcp.write_all(rest_data).await;
+        if let Err(e) = tcp.write_all(rest_data).await {
+            println!("DEBUG - Write initial rest_data failed: {}", e);
+            return;
+        }
     }
+
     let (mut tcp_read, mut tcp_write) = tcp.split();
     let (mut sender, mut receiver) = ws.split();
+
     let ws_to_tcp = async {
         while let Ok(Some(Ok(msg))) = timeout(Duration::from_secs(300), receiver.next()).await {
             if let Message::Binary(data) = msg {
@@ -523,8 +547,9 @@ async fn relay_tcp(ws: WebSocket, host: String, port: u16, rest_data: &[u8]) {
             }
         }
     };
+
     let tcp_to_ws = async {
-        let mut buf = vec![0u8; 4096];
+        let mut buf = vec![0u8; 16384];
         loop {
             match tcp_read.read(&mut buf).await {
                 Ok(0) => break,
@@ -535,9 +560,12 @@ async fn relay_tcp(ws: WebSocket, host: String, port: u16, rest_data: &[u8]) {
             }
         }
     };
+
     let _ = tokio::join!(ws_to_tcp, tcp_to_ws);
 }
+
 // ==================== WebSocket Handler ====================
+
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     let first_msg = match timeout(Duration::from_secs(5), receiver.next()).await {
@@ -550,43 +578,54 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             return;
         }
     };
-    // 1. VMESS (ver=1) 优先探测
+
+    // 1. VMESS 探测
     if first_msg.len() > 24 && first_msg[0] == 1 {
         if let Some((host, port, offset)) = parse_vmess_request(&first_msg, &state.config.uuid) {
             println!("DEBUG - VMESS auth OK, target={}:{}", host, port);
-            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            let ws = sender.reunite(receiver).unwrap();
+            relay_tcp(ws, host, port, &first_msg[offset..]).await;
             return;
         }
     }
-    // 2. VLESS (ver=0)
+
+    // 2. VLESS 探测 (VLESS Request Response Protocol)
     if first_msg.len() > 21 && first_msg[0] == 0 {
         if let Some((host, port, offset)) = parse_vless_request(&first_msg, &state.config.uuid) {
             println!("DEBUG - VLESS auth OK, target={}:{}", host, port);
-            // VLESS response: version + addon_len
-            let _ = sender.send(Message::Binary(vec![0, 0])).await;
-            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            // 按照协议，先回复 [0, 0] 确认建连成功
+            if sender.send(Message::Binary(vec![0, 0])).await.is_ok() {
+                let ws = sender.reunite(receiver).unwrap();
+                relay_tcp(ws, host, port, &first_msg[offset..]).await;
+            }
             return;
         }
     }
-    //3. Trojan
+
+    // 3. Trojan 探测
     if first_msg.len() >= 58 {
         if let Some((host, port, offset)) = parse_trojan_request(&first_msg, &state.config.uuid) {
             println!("DEBUG - Trojan auth OK, target={}:{}", host, port);
-            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            let ws = sender.reunite(receiver).unwrap();
+            relay_tcp(ws, host, port, &first_msg[offset..]).await;
             return;
         }
     }
-    //4. Shadowsocks
+
+    // 4. Shadowsocks 探测
     if !first_msg.is_empty() && [1u8, 3, 4].contains(&first_msg[0]) {
         if let Some((host, port, offset)) = parse_shadowsocks_request(&first_msg) {
             println!("DEBUG - SS target={}:{}", host, port);
-            relay_tcp(sender.reunite(receiver).unwrap(), host, port, &first_msg[offset..]).await;
+            let ws = sender.reunite(receiver).unwrap();
+            relay_tcp(ws, host, port, &first_msg[offset..]).await;
             return;
         }
     }
+
     println!("DEBUG - Unknown protocol, head={:?}",
         String::from_utf8_lossy(&first_msg[..first_msg.len().min(60)]));
 }
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -601,6 +640,7 @@ async fn ws_handler(
     println!("DEBUG - WS 101: upgrading connection");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
+
 async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
     let path = uri.path();
     if path == "/" || path == "/index.html" {
@@ -619,22 +659,26 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
         let name_part = if state.config.name.is_empty() { isp } else { format!("{}-{}", state.config.name, isp) };
         let tls_param = if tls == "tls" { "tls" } else { "none" };
         let ss_tls_param = if tls == "tls" { "tls;" } else { "" };
+
         // VLESS WS
         let vless_url = format!(
             "vless://{}@{}:{}?encryption=none&security={}&sni={}&fp=chrome&alpn=http%2F1.1&type=ws&host={}&path=%2F{}#{}",
             state.config.uuid, domain, port, tls_param, domain, domain, state.config.ws_path, name_part
         );
+
         // Trojan WS
         let trojan_url = format!(
             "trojan://{}@{}:{}?security={}&sni={}&fp=chrome&type=ws&host={}&path=%2F{}#{}",
             state.config.uuid, domain, port, tls_param, domain, domain, state.config.ws_path, name_part
         );
+
         // Shadowsocks
         let ss_method_password = BASE64.encode(format!("none:{}", state.config.uuid));
         let ss_url = format!(
             "ss://{}@{}:{}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D{};path%3D%2F{};{}sni%3D{};skip-cert-verify%3Dtrue;mux%3D0#{}",
             ss_method_password, domain, port, domain, state.config.ws_path, ss_tls_param, domain, name_part
         );
+
         // VMESS WS
         let vmess_json = serde_json::json!({
             "v": "2",
@@ -654,7 +698,7 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
         let vmess_raw = vmess_json.to_string();
         let vmess_url = format!("vmess://{}", BASE64.encode(vmess_raw));
 
-        // ========== 新增: VLESS Reality ==========
+        // VLESS Reality
         let mut reality_url = String::new();
         if let Some(r_port) = state.config.reality_port {
             if !state.config.reality_pubkey.is_empty() {
@@ -664,7 +708,8 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
                 );
             }
         }
-        // ========== 新增: Hysteria2 ==========
+
+        // Hysteria2
         let mut hy2_url = String::new();
         if let Some(h_port) = state.config.hy2_port {
             let mut fp_param = String::new();
@@ -677,7 +722,6 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
             );
         }
 
-        // 拼接全部节点，空字符串自动忽略
         let mut node_list = vec![vless_url, trojan_url, ss_url, vmess_url];
         if !reality_url.is_empty() { node_list.push(reality_url); }
         if !hy2_url.is_empty() { node_list.push(hy2_url); }
@@ -688,12 +732,14 @@ async fn http_handler(State(state): State<Arc<AppState>>, uri: Uri) -> impl Into
     }
     (axum::http::StatusCode::NOT_FOUND, "Not Found\n").into_response()
 }
+
 fn get_cloudflared_url() -> &'static str {
     match std::env::consts::ARCH {
         "aarch64" => "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
         _ => "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
     }
 }
+
 async fn is_cloudflared_running() -> bool {
     let output = match Command::new("ps").arg("aux").output().await {
         Ok(o) => o,
@@ -709,6 +755,7 @@ async fn is_cloudflared_running() -> bool {
     }
     running
 }
+
 async fn run_cloudflared(token: String) {
     if token.is_empty() {
         println!("ERROR - CLOUDFLARED_TOKEN is empty, cannot start tunnel");
@@ -863,6 +910,7 @@ async fn run_cloudflared(token: String) {
         }
     }
 }
+
 #[tokio::main]
 async fn main() {
     let config = Config::from_env();
