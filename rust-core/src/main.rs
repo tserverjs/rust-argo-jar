@@ -122,16 +122,16 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let uuid = env::var("UUID").unwrap_or_else(|_| "dfdb0037-70ca-46b0-ba2e-99f27ad568cc".to_string());
-        let domain = env::var("DOMAIN").unwrap_or_else(|_| "plugged.cnav.cn.eu.org".to_string());
+        let uuid = env::var("UUID").unwrap_or_else(|_| "eeab022c-5484-4fa9-9ac1-6ba2e388bdf3".to_string());
+        let domain = env::var("DOMAIN").unwrap_or_else(|_| "katabump.cnav.cn.eu.org".to_string());
         let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "hello-word".to_string());
-        let name = env::var("NAME").unwrap_or_else(|_| "plugged".to_string());
+        let name = env::var("NAME").unwrap_or_else(|_| "katabump".to_string());
         
         // 格式化 WS 路径，去掉首尾斜杠，保证后续拼接统一
         let raw_ws = env::var("WSPATH").unwrap_or_else(|_| uuid[..8.min(uuid.len())].to_string());
         let ws_path = raw_ws.trim_matches('/').to_string();
 
-        let mut port = 40694u16;
+        let mut port = 20079u16;
         for key in ["SERVER_PORT", "PORT"] {
             if let Ok(v) = env::var(key) {
                 let v = v.trim();
@@ -146,7 +146,7 @@ impl Config {
             }
         }
         let debug = env::var("DEBUG").unwrap_or_default().to_lowercase() == "true";
-        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiMjBlY2Y0N2QtOGQwNy00MjNlLTljNGMtZmU5MDVlN2MxZDQ0IiwicyI6Ik4yTmtaR05tWW1ZdE5UZGlZUzAwTW1Ka0xUZzVNalF0TWpsaE1qZG1ZV0kxTVdSbCJ9".to_string());
+        let cloudflared_token = env::var("CLOUDFLARED_TOKEN").unwrap_or_else(|_| "eyJhIjoiZDZlNGIzNDY3N2MzNjljOTViODM3YTcxNWFjZWNjYzciLCJ0IjoiODQ3ODAyZTktYzMzZS00YWQ2LTllMzYtZjMwZTA5N2Y5MThmIiwicyI6IlltWTRaakUzWVRjdFl6aGpZeTAwWkRnNExUZzBOelF0TURVM09UVmhaVFJqTmpGayJ9".to_string());
 
         let reality_pubkey = env::var("REALITY_PUBKEY").unwrap_or_default();
         let reality_port = env::var("REALITY_PORT").ok().and_then(|v| v.parse::<u16>().ok());
